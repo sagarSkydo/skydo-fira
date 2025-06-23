@@ -1,38 +1,77 @@
-
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, FileText, CheckCircle } from "lucide-react";
+import { Upload, FileText, CheckCircle, Image as ImageIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { PaymentMethod } from "@/services/firaApi";
 
 interface FileUploadProps {
-  onFileUpload: (file: File, paymentMethod: string) => void;
+  onFileUpload: (file: File, paymentMethod: PaymentMethod) => void;
 }
 
 export const FileUpload = ({ onFileUpload }: FileUploadProps) => {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | "">("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       const file = acceptedFiles[0];
-      setUploadedFile(file);
+      handleFile(file);
     }
   }, []);
+
+  const handleFile = (file: File) => {
+    // Validate file type
+    const validTypes = [
+      'application/pdf',
+      'image/png',
+      'image/jpeg',
+      'image/jpg'
+    ];
+    
+    if (!validTypes.includes(file.type)) {
+      toast({
+        title: "Invalid file type",
+        description: "Please upload a PDF or image file (PNG, JPG, JPEG)",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setUploadedFile(file);
+
+    // Create preview URL for images
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+    } else {
+      setPreviewUrl(null);
+    }
+  };
+
+  const handleFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      handleFile(file);
+    }
+  };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
       'application/pdf': ['.pdf'],
-      'application/vnd.ms-excel': ['.xls'],
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx']
+      'image/png': ['.png'],
+      'image/jpeg': ['.jpg', '.jpeg']
     },
-    multiple: false
+    multiple: false,
+    noClick: true // Disable click on dropzone since we're using our own button
   });
 
   const handleAnalyze = () => {
@@ -43,68 +82,96 @@ export const FileUpload = ({ onFileUpload }: FileUploadProps) => {
 
   const canAnalyze = uploadedFile && acceptedTerms && paymentMethod;
 
+  // Cleanup preview URL when component unmounts
+  const cleanup = useCallback(() => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  }, [previewUrl]);
+
+  useEffect(() => {
+    return cleanup;
+  }, [cleanup]);
+
   return (
-    <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.4 }}
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.6 }}
       className="max-w-2xl mx-auto"
     >
       <div
         {...getRootProps()}
-        className={`
-          relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer
-          transition-all duration-300 bg-white shadow-lg hover:shadow-xl
-          ${isDragActive 
-            ? 'border-blue-500 bg-blue-50' 
+        className={`border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 ${
+          isDragActive
+            ? 'border-blue-500 bg-blue-50'
             : uploadedFile 
-              ? 'border-green-500 bg-green-50' 
-              : 'border-slate-300 hover:border-blue-400'
-          }
-        `}
+              ? 'border-green-500 bg-green-50'
+              : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'
+        }`}
       >
-        <input {...getInputProps()} />
-        
-        <div className="space-y-6">
-          {uploadedFile ? (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", stiffness: 200 }}
-            >
-              <CheckCircle className="w-16 h-16 text-green-500 mx-auto" />
-            </motion.div>
-          ) : (
-            <motion.div
-              animate={{ y: isDragActive ? -10 : 0 }}
-              transition={{ type: "spring", stiffness: 200 }}
-            >
-              <Upload className="w-16 h-16 text-blue-400 mx-auto" />
-            </motion.div>
-          )}
-
-          {uploadedFile ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-center space-x-3">
-                <FileText className="w-6 h-6 text-green-600" />
-                <span className="text-lg font-medium text-green-700">
-                  {uploadedFile.name}
-                </span>
+        <input 
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileInputChange}
+          accept=".pdf,.png,.jpg,.jpeg"
+          className="hidden"
+        />
+        <div className="space-y-4">
+          <div className="flex justify-center">
+            {isDragActive ? (
+              <Upload className="w-12 h-12 text-blue-500" />
+            ) : uploadedFile ? (
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 200 }}
+                className="space-y-4"
+              >
+                {previewUrl ? (
+                  <div className="relative w-32 h-32 mx-auto">
+                    <img 
+                      src={previewUrl} 
+                      alt="Preview" 
+                      className="w-full h-full object-contain rounded-lg border border-slate-200"
+                    />
+                  </div>
+                ) : (
+                  <CheckCircle className="w-16 h-16 text-green-500 mx-auto" />
+                )}
+                <div className="flex items-center justify-center space-x-3">
+                  {previewUrl ? (
+                    <ImageIcon className="w-6 h-6 text-green-600" />
+                  ) : (
+                    <FileText className="w-6 h-6 text-green-600" />
+                  )}
+                  <span className="text-lg font-medium text-green-700">
+                    {uploadedFile.name}
+                  </span>
+                </div>
+                <p className="text-sm text-green-600">
+                  File uploaded successfully! Ready to analyze.
+                </p>
+              </motion.div>
+            ) : (
+              <div className="flex flex-col items-center">
+                <Upload className="w-12 h-12 text-slate-400" />
+                <p className="mt-2 text-sm text-slate-500">
+                  Drag & drop your FIRA document here
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Supported formats: PDF, PNG, JPG, JPEG
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="mt-4 bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Select File
+                </Button>
               </div>
-              <p className="text-sm text-green-600">
-                File uploaded successfully! Ready to analyze.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <h3 className="text-2xl font-semibold text-slate-700">
-                {isDragActive ? "Drop your file here" : "Drag and drop your FIRA/FIRC file here"}
-              </h3>
-              <p className="text-slate-500">
-                or click to select (PDF, XLS, XLSX)
-              </p>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -120,16 +187,16 @@ export const FileUpload = ({ onFileUpload }: FileUploadProps) => {
             <label htmlFor="payment-method" className="block text-sm font-medium text-slate-700">
               Payment Method
             </label>
-            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+            <Select value={paymentMethod} onValueChange={(value) => setPaymentMethod(value as PaymentMethod)}>
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Select payment method" />
               </SelectTrigger>
               <SelectContent className="bg-white border border-slate-200 shadow-lg z-50">
-                <SelectItem value="BANK">Bank</SelectItem>
-                <SelectItem value="PAYPAL">Paypal</SelectItem>
-                <SelectItem value="PAYONEER">Payoneer</SelectItem>
-                <SelectItem value="WISE">Wise</SelectItem>
-                <SelectItem value="OTHERS">Others</SelectItem>
+                <SelectItem value={PaymentMethod.BANK}>Bank</SelectItem>
+                <SelectItem value={PaymentMethod.PAYPAL}>PayPal</SelectItem>
+                <SelectItem value={PaymentMethod.PAYONEER}>Payoneer</SelectItem>
+                <SelectItem value={PaymentMethod.WISE}>Wise</SelectItem>
+                <SelectItem value={PaymentMethod.OTHERS}>Others</SelectItem>
               </SelectContent>
             </Select>
           </div>

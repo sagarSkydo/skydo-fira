@@ -1,11 +1,10 @@
-
 import { useState } from "react";
 import { FileUpload } from "@/components/FileUpload";
 import { ComparisonResults } from "@/components/ComparisonResults";
 import { AnimatedHeaderText } from "@/components/AnimatedHeaderText";
 import { LoadingStages } from "@/components/LoadingStages";
 import { motion } from "framer-motion";
-import { uploadAndProcessFira, FiraProcessingResult } from "@/services/firaApi";
+import { uploadAndProcessFira, FiraProcessingResult, PaymentMethod } from "@/services/firaApi";
 import { useToast } from "@/hooks/use-toast";
 
 const Index = () => {
@@ -14,75 +13,113 @@ const Index = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const { toast } = useToast();
 
-  const handleFileUpload = async (file: File, paymentMethod: string) => {
+  const handleFileUpload = async (file: File, paymentMethod: PaymentMethod) => {
     setUploadedFile(file);
     setIsAnalyzing(true);
 
     try {
+      console.log('Starting file upload process...');
       const result: FiraProcessingResult = await uploadAndProcessFira(file, paymentMethod);
+      console.log('Received API response:', result);
       
-      if (result.success && result.firaData) {
-        // Transform API data to match our component format
-        const transformedData = {
-          currentProvider: {
-            name: "Current Provider",
-            paymentAmount: result.firaData.inrAmount,
-            charges: [
-              {
-                type: "FX Rate",
-                amount: result.firaData.calculatedExchangeRate,
-                isPercentage: false
-              },
-              {
-                type: "Wire Fee",
-                amount: result.firaData.platformWireFee
-              },
-              {
-                type: "FIRA Fee",
-                amount: result.firaData.platformFiraFee
-              }
-            ],
-            totalOnTransaction: result.firaData.platformWireFee + result.firaData.platformFiraFee + result.firaData.platformTransactionFee,
-            effectiveCost: ((result.firaData.inrAmount - result.firaData.finalInrAmount) / result.firaData.inrAmount) * 100
-          },
-          skydo: {
-            name: "Skydo",
-            paymentAmount: result.firaData.amount * result.firaData.fxRateSkydo,
-            charges: [
-              {
-                type: "FX Rate",
-                amount: result.firaData.fxRateSkydo,
-                isPercentage: false
-              },
-              {
-                type: "Wire Fee",
-                amount: result.firaData.skydoWireFee
-              },
-              {
-                type: "FIRA Fee",
-                amount: result.firaData.skydoFiraFee
-              }
-            ],
-            totalOnTransaction: result.firaData.skydoWireFee + result.firaData.skydoFiraFee + result.firaData.transactionSkydoFee,
-            effectiveCost: ((result.firaData.amount * result.firaData.fxRateSkydo - result.firaData.finalInrAmountSkydo) / (result.firaData.amount * result.firaData.fxRateSkydo)) * 100
-          },
-          savings: {
-            amount: result.firaData.finalInrAmountSkydo - result.firaData.finalInrAmount,
-            percentage: ((result.firaData.finalInrAmountSkydo - result.firaData.finalInrAmount) / result.firaData.finalInrAmount) * 100
-          },
-          transactionAmount: result.firaData.inrAmount,
-          originalAmount: result.firaData.amount,
-          currency: result.firaData.currency
-        };
-        
-        setAnalysisData(transformedData);
-        toast({
-          title: "Analysis Complete",
-          description: "Your FIRA document has been successfully analyzed.",
-        });
-      } else {
-        throw new Error(result.message || "Failed to process FIRA document");
+      if (!result.success) {
+        const errorMessage = result.errors?.length > 0 
+          ? result.errors.join(', ') 
+          : result.message || "Failed to process FIRA document";
+        throw new Error(errorMessage);
       }
+
+      if (!result.firaData) {
+        throw new Error("No data received from server");
+      }
+
+      const { firaData } = result;
+
+      // Calculate effective costs
+      // Current Provider: (Original INR Amount - Final INR Amount) / Original INR Amount * 100
+      const currentProviderEffectiveCost = Number(
+        (((firaData.inrAmount - firaData.finalInrAmount) / firaData.inrAmount) * 100).toFixed(2)
+      );
+
+      // Skydo: (Original Amount * Skydo FX Rate - Final Skydo INR Amount) / (Original Amount * Skydo FX Rate) * 100
+      const skydoOriginalInrAmount = firaData.amount * firaData.fxRateSkydo;
+      const skydoEffectiveCost = Number(
+        (((skydoOriginalInrAmount - firaData.finalInrAmountSkydo) / skydoOriginalInrAmount) * 100).toFixed(2)
+      );
+
+      // Transform API data to match our component format
+      const transformedData = {
+        currentProvider: {
+          name: "Current Provider",
+          paymentAmount: Number(firaData.inrAmount.toFixed(2)),
+          charges: [
+            {
+              type: "FX Rate",
+              amount: Number(firaData.calculatedExchangeRate.toFixed(4)),
+              isPercentage: false
+            },
+            {
+              type: "Wire Fee (INR)",
+              amount: Number(firaData.platformWireFee.toFixed(2))
+            },
+            {
+              type: "FIRA Fee (INR)",
+              amount: Number(firaData.platformFiraFee.toFixed(2))
+            },
+            {
+              type: "Transaction Fee (INR)",
+              amount: Number(firaData.platformTransactionFee.toFixed(2))
+            }
+          ],
+          totalOnTransaction: Number(
+            (firaData.platformWireFee + firaData.platformFiraFee + firaData.platformTransactionFee).toFixed(2)
+          ),
+          effectiveCost: currentProviderEffectiveCost
+        },
+        skydo: {
+          name: "Skydo",
+          paymentAmount: Number(skydoOriginalInrAmount.toFixed(2)),
+          charges: [
+            {
+              type: "FX Rate",
+              amount: Number(firaData.fxRateSkydo.toFixed(4)),
+              isPercentage: false
+            },
+            {
+              type: "Wire Fee (INR)",
+              amount: Number(firaData.skydoWireFee.toFixed(2))
+            },
+            {
+              type: "FIRA Fee (INR)",
+              amount: Number(firaData.skydoFiraFee.toFixed(2))
+            },
+            {
+              type: "Transaction Fee (INR)",
+              amount: Number(firaData.transactionSkydoFee.toFixed(2))
+            }
+          ],
+          totalOnTransaction: Number(
+            (firaData.skydoWireFee + firaData.skydoFiraFee + firaData.transactionSkydoFee).toFixed(2)
+          ),
+          effectiveCost: skydoEffectiveCost
+        },
+        savings: {
+          amount: Number((firaData.finalInrAmountSkydo - firaData.finalInrAmount).toFixed(2)),
+          percentage: Number(
+            (((firaData.finalInrAmountSkydo - firaData.finalInrAmount) / firaData.finalInrAmount) * 100).toFixed(2)
+          )
+        },
+        transactionAmount: Number(firaData.inrAmount.toFixed(2)),
+        originalAmount: Number(firaData.amount.toFixed(2)),
+        currency: firaData.currency
+      };
+      
+      console.log('Transformed data:', transformedData);
+      setAnalysisData(transformedData);
+      toast({
+        title: "Analysis Complete",
+        description: "Your FIRA document has been successfully analyzed.",
+      });
     } catch (error) {
       console.error('Error processing FIRA file:', error);
       toast({
